@@ -6,7 +6,7 @@ pipeline {
     stage('Retrieve Sources') {
               steps {
          echo workspace
-         git branch: 'master', credentialsId: 'github_JO', url: 'https://github.com/JoeOffenberg/CorpSite-1'
+         git branch: 'master', credentialsId: 'c1fb254e-5793-4b45-ae77-2c622dbdb860', url: 'https://github.com/prathyushakondapalli/DevOps'
          
     	}
     }
@@ -215,9 +215,9 @@ pipeline {
         snDevOpsPackage(name: "Globex-IaC-${env.BUILD_NUMBER}", artifactsPayload: """{"artifacts":[{"name": "globex-iac.war", "version": "1.${env.BUILD_NUMBER}", "repositoryName": "GlobexCorp"}], "branchName":"master"}""")
         snDevOpsChange(applicationName: "Globex-Website-Front-End", snapshotName:"${snapshotObject[0].name}" )
         sh "mv  target/globex-web.war target/ROOT.war"
-        azureWebAppPublish (azureCredentialsId: '5fadee4f-f7c0-4701-b87f-de072acb0fea',
-        resourceGroup: 'globex-web-1607528956753-rg', appName: 'globex', 
-	filePath: '**/ROOT.war', targetDirectory: 'webapps')
+       //azureWebAppPublish (azureCredentialsId: '5fadee4f-f7c0-4701-b87f-de072acb0fea',
+       // resourceGroup: 'globex-web-1607528956753-rg', appName: 'globex', 
+	//filePath: '**/ROOT.war', targetDirectory: 'webapps')
 		    
 
         }         
