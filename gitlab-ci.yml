@@ -1,0 +1,71 @@
+image: maven:latest
+
+cache:
+  key: "$CI_PIPELINE_ID"
+  paths:
+    - ./target
+
+variables:
+  DURATION: 20
+  MAVEN_CLI_OPTS: ""    #-s .m2/settings.xml --batch-mode"
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  INSTANCE: "lrochette1.service-now.com"
+  TOOLID: "af159fb51bead050a9aec88c0a4bcb53"
+  REPONAME: "amex-repo"
+  ARTNAME: "amex-gl-war"
+  ARTVERSION: "3.0.${CI_PIPELINE_ID}"
+  COMPANY: "amex"
+
+stages:
+  - build
+  - uat
+  - test
+  - prod
+
+build:
+  stage: build
+  tags:
+    - ec2
+  script:
+    - echo "\nBuilding"
+    - mvn $MAVEN_CLI_OPTS compile verify
+    - echo "Registering artifact"
+    - |
+      curl --fail --output "/dev/null" --silent --show-error --write-out "HTTP response: ${http_code}\n\n" \
+      --data "{\"artifacts\" : [ { \"name\": \"$ARTNAME\", \"repositoryName\": \"$REPONAME\", \"version\": \"$ARTVERSION\", \"semanticVersion\": \"$ARTVERSION\"} ], \"projectName\": \"${CI_PROJECT_TITLE}#${CI_JOB_NAME}\", \"taskExecutionNumber\": \"${CI_JOB_ID}\" }" \
+      --header "Content-Type: application/json" --request POST \
+      "https://devops.integration.user:devops@$INSTANCE/api/sn_devops/v1/devops/artifact/registration?orchestrationToolId=$TOOLID"
+    - echo "Status- $?"
+
+uat:
+  stage: uat
+  tags:
+    - ec2
+  script:
+    - echo "Deploy to UAT"
+    - scp -i ~/.ssh/Ohio-LR.pem target/globex-web.war ec2-user@uat:/opt/tomcat/webapps
+
+test:
+  stage: test
+  tags:
+    - ec2
+  script:
+    - echo "Testing"
+    - mvn $MAVEN_CLI_OPTS test
+    - echo "Register package"
+    - |
+      curl -i \
+        --data "{\"artifacts\": [ { \"name\": \"$ARTNAME\", \"repositoryName\": \"$REPONAME\", \"version\": \"$ARTVERSION\" } ], \"projectName\": \"${CI_PROJECT_TITLE}#${CI_JOB_NAME}\", \"taskExecutionNumber\": \"${CI_JOB_ID}\", \"name\": \"${COMPANY}_Globex\" }" \
+        --header "Content-Type: application/json" \
+        --request POST \
+        "https://devops.integration.user:devops@$INSTANCE/api/sn_devops/v1/devops/package/registration?orchestrationToolId=$TOOLID"
+    - echo "Status- $?"
+prod:
+  stage: prod
+  tags:
+    - ec2
+  script:
+    - echo "Deploy in Production"
+    - scp -i ~/.ssh/Ohio-LR.pem target/globex-web.war ec2-user@prod:/opt/tomcat/webapps
+  when: manual
+  allow_failure: false

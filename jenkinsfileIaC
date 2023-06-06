@@ -1,0 +1,230 @@
+def snapshotObject = ''
+pipeline {
+   agent any
+
+    stages {
+    stage('Retrieve Sources') {
+              steps {
+         echo workspace
+         git branch: 'master', credentialsId: 'github_JO', url: 'https://github.com/JoeOffenberg/CorpSite-1'
+         
+    	}
+    }
+    
+    stage('Build') {
+      // Run the maven build
+      steps{
+      script{
+                rtServer (
+                    id: "ARTIFACTORY_SERVER",
+                    url: "https://sndemo.jfrog.io/artifactory",
+                    credentialsId: "jFrog_sndemo"
+                )
+
+                rtMavenDeployer (
+                    id: "MAVEN_DEPLOYER",
+                    serverId: "ARTIFACTORY_SERVER",
+                    releaseRepo: "globex",
+                    snapshotRepo: "globex"
+                )
+
+                rtMavenResolver (
+                    id: "MAVEN_RESOLVER",
+                    serverId: "ARTIFACTORY_SERVER",
+                    releaseRepo: "globex",
+                    snapshotRepo: "globex"
+                )
+		
+      def mvnHome
+      withEnv(["MVN_HOME=$mvnHome"]) {
+         if (isUnix()) {
+            sh '"/usr/bin/mvn" -Dmaven.test.failure.ignore clean package deploy artifact:buildinfo'
+         } else {
+            bat(/"%MVN_HOME%\bin\mvn" -Dmaven.test.failure.ignore clean package/)
+         }
+      }
+     
+      archiveArtifacts 'target/*.war'
+      snDevOpsArtifact(artifactsPayload: """{"artifacts": [{"name": "globex-iac.war", "version": "1.${env.BUILD_NUMBER}","semanticVersion": "1.${env.BUILD_NUMBER}.0","repositoryName": "GlobexCorp"}],"branchName":"master"}""")
+      
+      // Publish to artifactory
+      rtPublishBuildInfo (
+                    serverId: "ARTIFACTORY_SERVER"
+                )
+      }
+      }
+   }
+    
+      stage ('Validation'){
+                                 
+        parallel {
+        
+        stage ('Config'){
+		stages ('Config Steps'){
+		           
+		       stage('UploadConfig'){
+        
+            steps {
+            script{
+            changeSetId = snDevOpsConfigUpload(
+            applicationName: "Globex-Website-Front-End",
+            target:"component",
+            namePath:"CFT", 
+            configFile:"infra/AWS-CFT.json",
+            autoCommit:"false",
+            autoValidate:"false",
+            dataFormat:"json")
+            
+            snDevOpsConfigUpload(
+            changesetNumber: "${changeSetId}",
+            applicationName: "Globex-Website-Front-End",
+            target:"component",
+            namePath:"firewall", 
+            configFile:"infra/firewall.json",
+            autoCommit:"true",
+            autoValidate:"true",
+            dataFormat:"json")
+            
+            
+		if(changeSetId != null){
+
+                                    echo "Change set registration for ${changeSetId}"
+				    sleep(time:60,unit:"SECONDS")  
+                                    changeSetRegResult = snDevOpsConfigRegisterPipeline(changesetNumber:"${changeSetId}", applicationName: "Globex-Website-Front-End")
+                                    echo "change set registration set result ${changeSetRegResult}"
+                                    
+                              } else {
+                                    
+                                    error "Change set was not created"
+                              }
+           	 }    
+            } //steps
+         } //stage       
+
+       
+         stage('Validate Config') {
+            steps {
+            script{
+            sleep(time:5,unit:"SECONDS")    
+            validateRespnonse = snDevOpsConfigValidate(
+              applicationName: "Globex-Website-Front-End",
+	      markFailed: "false",
+              deployableName:"Globex-Prd")
+            snapshot=snDevOpsConfigGetSnapshots(applicationName: "Globex-Website-Front-End",
+              deployableName:"Globex-Prd",
+              changesetNumber: "${changeSetId}")
+	      echo  "snapshot =  ${snapshot}"
+	    snapshotObject = readJSON text: snapshot
+
+            if(validateRespnonse != null){echo "Validate request submitted successfully, RESPONSE from Validate API: ${validateRespnonse} ${snapshotObject}"}
+            else{echo "Validate request failed to submitt, RESPONSE from Validate Api: ${validateRespnonse}"}
+              
+	    if(snapshotObject[0].validation=="failed"){
+            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE')
+               { echo "!!!!!!!!!! RESPONSE FROM VALIDATE :  ${snapshotObject[0].validation}"
+	         sh "exit 1"}
+              }else
+	       { echo "!!!!!!!!!! RESPONSE FROM VALIDATE :  ${snapshotObject[0].validation}" }
+	       changeSetRegResult = snDevOpsConfigRegisterPipeline(snapshotName:"${snapshotObject[0].name}", applicationName: "Globex-Website-Front-End")
+               echo "change set registration set result ${changeSetRegResult}"
+	       junit "Globex*${env.BUILD_NUMBER}.xml"
+            }//script
+            }//steps    
+        }//validate config stage  
+       
+                
+            
+        stage('Publish Config') {
+            steps {
+                snDevOpsConfigPublish(snapshotName:"${snapshotObject[0].name}", applicationName: "Globex-Website-Front-End",  deployableName:"Globex-Prd")
+                            
+            }
+        }
+        
+       
+			}
+			} //validation
+			
+		stage ('Code'){ 
+		stages{
+    			
+			    stage('jUnit Test'){ 
+                steps {echo "Testing..."
+                    junit testResults: 'target/surefire-reports/*.xml', skipPublishingChecks: true
+                     }
+                  }
+                  
+               stage('SonarQube analysis') {
+                steps {
+                withSonarQubeEnv(credentialsId: 'sonar_token', installationName: 'local SonarQube Server') { // You can override the credential to be used
+                sh 'mvn org.sonarsource.scanner.maven:sonar-maven-plugin:3.7.0.1746:sonar'
+                   }
+                 }
+                }
+
+                  
+          }	
+                 
+                  
+        }
+       } //parallel
+    } //Validation Stage
+    
+    
+    
+    stage ('UAT Deployment'){
+    steps {
+        script{
+            snDevOpsConfigExport(applicationName:"Globex-Website-Front-End",
+               deployableName:"Globex-Prd",
+               exporterName:"returnAllData",
+               exporterFormat: "json", 
+               fileName: "all.json")
+               sh "ls -l"
+        }
+
+                     }
+    
+    }
+    
+    stage (Functional) {
+        parallel {
+       	          			
+			    stage('Selenium API'){ 
+                steps { echo "Selenium API..2..3..4"
+                		sleep(time:10,unit:"SECONDS")
+                		echo "Selenium API..2..3..4"
+                     }
+                  }
+                  
+                stage('Selenium UI'){ 
+                steps {	echo "Selenium UI..2..3..4"
+                		sh 'selenium 15'
+                		echo "Selenium API..2..3..4"
+				junit "selenium.xml"
+                     }
+                  }
+                 
+    }
+    
+    }//Functional Testing
+    stage ('PRD Deployment'){
+    steps {
+        script{
+        
+        snDevOpsPackage(name: "Globex-IaC-${env.BUILD_NUMBER}", artifactsPayload: """{"artifacts":[{"name": "globex-iac.war", "version": "1.${env.BUILD_NUMBER}", "repositoryName": "GlobexCorp"}], "branchName":"master"}""")
+        snDevOpsChange(applicationName: "Globex-Website-Front-End", snapshotName:"${snapshotObject[0].name}" )
+        sh "mv  target/globex-web.war target/ROOT.war"
+        azureWebAppPublish (azureCredentialsId: '5fadee4f-f7c0-4701-b87f-de072acb0fea',
+        resourceGroup: 'globex-web-1607528956753-rg', appName: 'globex', 
+	filePath: '**/ROOT.war', targetDirectory: 'webapps')
+		    
+
+        }         
+            
+        }
+    
+    }//PRD Deployment
+ } //Outer Stages
+
+} //Pipeline

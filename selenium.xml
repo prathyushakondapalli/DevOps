@@ -1,0 +1,7 @@
+<?xml version="1.0" ?>
+<testsuites>
+    <testsuite errors="0" failures="0" id="0" name="Selenium Functional Test" tests="2">
+        <testcase classname="selenium.career.job" name="Career job post" time="13.345000"/>
+        <testcase classname="selenium.career.job" name="Career job apply" time="12.345000"/>
+    </testsuite>
+</testsuites>

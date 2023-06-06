@@ -1,0 +1,62 @@
+trigger:
+- master
+name: $(Date:yyyyMMdd)$(Rev:.r)
+
+stages:
+- stage: BuildStage
+  jobs:
+  - job: 'BuildHelloWorldJob'
+    steps:
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: |
+          # Write your commands here
+          
+          echo 'Hello world'
+  - job: 'TestHellowWorldJob'
+    dependsOn: "BuildHelloWorldJob"
+    steps:
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: |
+          # Write your commands here
+          
+          echo 'Hello world'
+ 
+
+
+  
+- stage: TestStage
+  jobs:
+  - job: "DeployHelloWorldJob"
+    steps:
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: |
+          # Write your commands here.
+          
+          echo 'Hello world '
+  - job: "ProdHelloWorldJob"
+    pool: server
+    dependsOn: "DeployHelloWorldJob"
+    steps:
+    - task: InvokeRESTAPI@1
+      inputs:
+        connectionType: 'connectedServiceName'
+        serviceConnection: 'dstest'
+        urlSuffix: "api/sn_devops/v1/devops/orchestration/changeControl?toolId=a865bf641b86d410ef803223cc4bcb94&toolType=adop"
+        method: 'POST'
+        body: |
+          {
+           "buildNumber": "$(build.buildId)",
+           "isMultiBranch": "true",
+           "branchName": "$(build.sourceBranchName)"
+          }
+        waitForCompletion: 'true'
+
+    - task: Delay@1
+      inputs:
+        delayForMinutes: '0'
